@@ -1,4 +1,4 @@
-/* Masonry Gallery & Lightbox Controller */
+/* Masonry Gallery & Permanent Relative Image Loader */
 document.addEventListener('DOMContentLoaded', () => {
   const lightboxModal = document.getElementById('lightbox-modal');
   const lightboxImg = document.getElementById('lightbox-img');
@@ -6,37 +6,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const galleryGrid = document.getElementById('gallery-grid');
   const photoUploader = document.getElementById('photo-upload-input');
 
-  // Key for local storage
-  const STORAGE_KEY = 'akka_uploaded_gallery_photos';
-
-  // Load photos from LocalStorage
-  function getStoredPhotos() {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      return stored ? JSON.parse(stored) : [];
-    } catch(e) {
-      console.error("Could not load photos", e);
-      return [];
-    }
-  }
-
-  function savePhotos(photos) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(photos));
-    } catch(e) {
-      console.warn("Storage size limit reached for images", e);
-      alert("Note: Image saved for this session. For permanent storage, keep images under 2MB each.");
-    }
-  }
-
-  // Render Gallery
-  function renderGallery() {
+  // Load photos from permanent assets/images/manifest.json
+  async function loadDeployedGallery() {
     if (!galleryGrid) return;
-    const photos = getStoredPhotos();
 
+    try {
+      // Fetch manifest containing relative filenames inside assets/images/
+      const res = await fetch('assets/images/manifest.json?t=' + Date.now());
+      if (!res.ok) throw new Error('Manifest not found');
+      
+      const data = await res.json();
+      const images = data.images || [];
+
+      renderGallery(images);
+    } catch (err) {
+      console.warn("Manifest loading notice:", err);
+      renderGallery([]);
+    }
+  }
+
+  function renderGallery(imageFiles) {
+    if (!galleryGrid) return;
     galleryGrid.innerHTML = '';
 
-    if (photos.length === 0) {
+    if (!imageFiles || imageFiles.length === 0) {
       // Empty state box
       const emptyState = document.createElement('div');
       emptyState.style.gridColumn = '1 / -1';
@@ -47,53 +40,42 @@ document.addEventListener('DOMContentLoaded', () => {
       emptyState.innerHTML = `
         <div style="font-size: 3.2rem; margin-bottom: 15px;">📸</div>
         <h3 style="font-size: 1.5rem; color: #4a2840; margin-bottom: 10px;">Your Gallery is Empty</h3>
-        <p style="color: var(--text-muted); font-size: 1rem; max-width: 450px; margin: 0 auto;">
-          Click the <strong>"📷 Add / Replace Photos"</strong> button above to upload your favorite memories with Akka!
+        <p style="color: var(--text-muted); font-size: 1rem; max-width: 480px; margin: 0 auto 15px auto;">
+          No photos have been added to the deployment gallery yet.
+        </p>
+        <p style="color: #6e5e6d; font-size: 0.9rem;">
+          Drop your photos into <code>assets/images/</code> in your repository and commit to publish them permanently!
         </p>
       `;
       galleryGrid.appendChild(emptyState);
       return;
     }
 
-    photos.forEach((photoData, index) => {
+    imageFiles.forEach(filename => {
+      // Permanent relative path
+      const relativePath = `assets/images/${filename}`;
+      const title = filename.replace(/\.[^/.]+$/, "").replace(/[-_]/g, " ");
+
       const card = document.createElement('div');
       card.className = 'glass-panel gallery-card';
       card.innerHTML = `
-        <img src="${photoData.src}" alt="${photoData.title || 'Sister Memory'}" />
-        <button class="gallery-delete-btn" title="Delete Photo" data-index="${index}">🗑️</button>
+        <img src="${relativePath}" alt="${title}" loading="lazy" />
         <div class="gallery-card-overlay">
-          <h3>${photoData.title || 'Precious Memory ❤️'}</h3>
+          <h3>${title || 'Precious Memory ❤️'}</h3>
           <p>Click to expand</p>
         </div>
       `;
 
-      // Lightbox Click
-      card.addEventListener('click', (e) => {
-        if (e.target.classList.contains('gallery-delete-btn')) return;
+      // Lightbox Click Handler
+      card.addEventListener('click', () => {
         if (lightboxImg && lightboxModal) {
-          lightboxImg.src = photoData.src;
+          lightboxImg.src = relativePath;
           lightboxModal.classList.add('active');
         }
       });
 
-      // Delete Photo Click
-      const deleteBtn = card.querySelector('.gallery-delete-btn');
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          deletePhoto(index);
-        });
-      }
-
       galleryGrid.appendChild(card);
     });
-  }
-
-  function deletePhoto(index) {
-    const photos = getStoredPhotos();
-    photos.splice(index, 1);
-    savePhotos(photos);
-    renderGallery();
   }
 
   // Handle Lightbox Close
@@ -111,39 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Handle Photo Upload Input
+  // File Upload Helper (Gives direct guidance on how to commit photos permanently)
   if (photoUploader) {
     photoUploader.addEventListener('change', (e) => {
       const files = Array.from(e.target.files);
       if (files.length === 0) return;
 
-      const currentPhotos = getStoredPhotos();
-      let processed = 0;
-
-      files.forEach(file => {
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-          currentPhotos.unshift({
-            src: evt.target.result,
-            title: file.name.replace(/\.[^/.]+$/, "") || 'Special Memory ❤️'
-          });
-          processed++;
-
-          if (processed === files.length) {
-            savePhotos(currentPhotos);
-            renderGallery();
-            if (window.confettiEngine) {
-              window.confettiEngine.spawn(80);
-            }
-          }
-        };
-        reader.readAsDataURL(file);
-      });
-
-      photoUploader.value = '';
+      alert(`📷 Selected ${files.length} photo(s)!\n\nTo make them permanent on your deployed website:\n1. Move the photo file(s) into your project's 'assets/images/' folder.\n2. Commit & push to GitHub!\n\nThey will automatically appear on your published site permanently.`);
     });
   }
 
-  // Initial render
-  renderGallery();
+  // Initial load
+  loadDeployedGallery();
 });
