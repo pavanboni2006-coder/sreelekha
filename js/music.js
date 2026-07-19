@@ -1,16 +1,39 @@
-/* Music Player & Custom MP3 Playlist Controller */
+/* Music Player — Audio files saved and loaded ONLY from public/assets/audio/ */
 class BirthdayAudioPlayer {
   constructor() {
     this.isPlaying = false;
     this.audioElement = new Audio();
     this.audioElement.loop = false;
     
-    // Playlist is empty by default
     this.playlist = [];
     this.currentTrackIndex = -1;
 
     this.toggleBtn = document.getElementById('music-toggle');
     this.initListeners();
+    this.loadPlaylistFromManifest();
+  }
+
+  async loadPlaylistFromManifest() {
+    try {
+      const res = await fetch('public/assets/manifest.json?t=' + Date.now());
+      if (res.ok) {
+        const data = await res.json();
+        this.playlist = data.songs || [];
+        this.updatePlaylistUI();
+        return;
+      }
+    } catch(e) {}
+
+    try {
+      const res = await fetch('/api/manifest');
+      if (res.ok) {
+        const data = await res.json();
+        this.playlist = data.songs || [];
+        this.updatePlaylistUI();
+      }
+    } catch(e) {
+      console.error('Could not fetch music manifest', e);
+    }
   }
 
   initListeners() {
@@ -18,7 +41,6 @@ class BirthdayAudioPlayer {
       this.toggleBtn.addEventListener('click', () => this.togglePlay());
     }
 
-    // Audio end listener to automatically play next track in user's playlist
     this.audioElement.addEventListener('ended', () => {
       if (this.playlist.length > 0) {
         let nextIndex = (this.currentTrackIndex + 1) % this.playlist.length;
@@ -28,36 +50,62 @@ class BirthdayAudioPlayer {
       }
     });
 
-    // User MP3 file uploader
+    // Custom MP3 song uploader -> saves to public/assets/audio/
     const musicUploader = document.getElementById('music-file-input');
     if (musicUploader) {
-      musicUploader.addEventListener('change', (e) => {
+      musicUploader.addEventListener('change', async (e) => {
         const files = Array.from(e.target.files);
-        files.forEach(file => {
+        if (files.length === 0) return;
+
+        for (const file of files) {
           if (file && file.type.startsWith('audio/')) {
-            const fileURL = URL.createObjectURL(file);
-            this.playlist.push({
-              id: Date.now() + Math.random(),
-              title: file.name.replace(/\.[^/.]+$/, ""),
-              duration: "Uploaded Song",
-              src: fileURL
-            });
+            await this.uploadAudioFile(file);
           }
-        });
+        }
 
-        this.updatePlaylistUI();
+        await this.loadPlaylistFromManifest();
 
-        // Auto-play first song if not currently playing
+        // Auto-play first uploaded song if not playing
         if (!this.isPlaying && this.playlist.length > 0 && this.currentTrackIndex === -1) {
           this.playTrack(0);
         }
+
+        musicUploader.value = '';
       });
     }
   }
 
+  async uploadAudioFile(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const res = await fetch('/api/upload-song', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              filename: file.name,
+              base64Data: e.target.result
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            resolve(data);
+          } else {
+            reject(new Error(data.error || 'Upload failed'));
+          }
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.readAsDataURL(file);
+    });
+  }
+
   togglePlay() {
     if (this.playlist.length === 0) {
-      alert("Please click '🎶 Add Song (.mp3)' to upload your favorite songs first!");
+      alert("Please click '🎶 Add Song (.mp3)' to upload your favorite songs to public/assets/audio/ first!");
       return;
     }
 
@@ -76,9 +124,10 @@ class BirthdayAudioPlayer {
     if (this.playlist.length === 0 || this.currentTrackIndex < 0) return;
     const currentTrack = this.playlist[this.currentTrackIndex];
 
-    if (currentTrack && currentTrack.src) {
-      if (this.audioElement.src !== currentTrack.src) {
-        this.audioElement.src = currentTrack.src;
+    if (currentTrack) {
+      const trackSrc = currentTrack.path || `public/assets/audio/${currentTrack.filename}`;
+      if (this.audioElement.src !== trackSrc) {
+        this.audioElement.src = trackSrc;
       }
       this.audioElement.play().then(() => {
         this.isPlaying = true;
@@ -89,7 +138,7 @@ class BirthdayAudioPlayer {
         }
         this.updatePlaylistUI();
       }).catch(err => {
-        console.log('Playback notice:', err);
+        console.log('Audio playback notice:', err);
       });
     }
   }
@@ -111,11 +160,16 @@ class BirthdayAudioPlayer {
     if (index < 0 || index >= this.playlist.length) return;
     this.currentTrackIndex = index;
     const currentTrack = this.playlist[index];
-    this.audioElement.src = currentTrack.src;
+    const trackSrc = currentTrack.path || `public/assets/audio/${currentTrack.filename}`;
+    this.audioElement.src = trackSrc;
     this.play();
   }
 
-  deleteTrack(index) {
+  async deleteTrack(index) {
+    if (index < 0 || index >= this.playlist.length) return;
+    const track = this.playlist[index];
+    const trackSrc = track.path || `public/assets/audio/${track.filename}`;
+
     if (index === this.currentTrackIndex) {
       this.pause();
       this.audioElement.src = '';
@@ -123,11 +177,16 @@ class BirthdayAudioPlayer {
     } else if (index < this.currentTrackIndex) {
       this.currentTrackIndex--;
     }
-    this.playlist.splice(index, 1);
-    if (this.playlist.length === 0) {
-      this.currentTrackIndex = -1;
-    }
-    this.updatePlaylistUI();
+
+    try {
+      await fetch('/api/delete-file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ relativePath: trackSrc })
+      });
+    } catch(e) {}
+
+    await this.loadPlaylistFromManifest();
   }
 
   updatePlaylistUI() {
@@ -147,7 +206,7 @@ class BirthdayAudioPlayer {
         <div style="font-size: 2.8rem; margin-bottom: 10px;">🎵</div>
         <h4 style="font-size: 1.3rem; color: #4a2840; margin-bottom: 8px;">No Songs Added Yet</h4>
         <p style="color: var(--text-muted); font-size: 0.95rem; max-width: 400px; margin: 0 auto;">
-          Click the <strong>"🎶 Add Song (.mp3)"</strong> button above to add your sister's favorite songs!
+          Click the <strong>"🎶 Add Song (.mp3)"</strong> button above to upload songs to <code>public/assets/audio/</code>!
         </p>
       `;
       playlistContainer.appendChild(emptyCard);
@@ -162,8 +221,8 @@ class BirthdayAudioPlayer {
       card.innerHTML = `
         <div class="track-icon">${isCurrent && this.isPlaying ? '▶️' : '🎵'}</div>
         <div class="track-info" style="flex: 1;">
-          <h4>${track.title}</h4>
-          <p>${track.duration}</p>
+          <h4>${track.title || track.filename}</h4>
+          <p>Saved in public/assets/audio/</p>
         </div>
         <button class="track-delete-btn" title="Remove song" style="background: transparent; border: none; font-size: 1.1rem; cursor: pointer; opacity: 0.7; transition: opacity 0.2s;" data-index="${index}">🗑️</button>
       `;
@@ -189,6 +248,6 @@ class BirthdayAudioPlayer {
 window.birthdayAudio = new BirthdayAudioPlayer();
 document.addEventListener('DOMContentLoaded', () => {
   if (window.birthdayAudio) {
-    window.birthdayAudio.updatePlaylistUI();
+    window.birthdayAudio.loadPlaylistFromManifest();
   }
 });

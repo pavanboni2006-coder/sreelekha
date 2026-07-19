@@ -1,0 +1,9 @@
+{
+  "name": "sreelekha-birthday-surprise",
+  "version": "1.0.0",
+  "description": "Birthday Surprise Website for Akka",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
